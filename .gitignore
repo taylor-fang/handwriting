@@ -1,0 +1,7 @@
+# test downloads and outputs
+test/.cache/
+test/out/
+samples/
+node_modules/
+.DS_Store
+*.log
