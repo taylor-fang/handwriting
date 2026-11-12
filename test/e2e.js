@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /*
  * End-to-end test: opens index.html from disk in headless Chromium, uploads a
- * synthetic photo (test/make_sample.py), checks the automatic corner finder,
- * drags the four corner handles onto the marks, waits for the font and checks it.
+ * synthetic photo (test/make_sample.py), and checks what the page read and built.
  *
- *   node test/e2e.js SAMPLE_DIR OUT_DIR            full run, downloads + screenshots into OUT_DIR
- *   node test/e2e.js SAMPLE_DIR OUT_DIR --detect   only check corner detection
+ *   node test/e2e.js SAMPLE_DIR OUT_DIR
  *
+ * A sample made with --skip checks the "wrong count" message instead.
  * Needs Playwright with Chromium. opentype.js is served from a local copy
  * (fetched once from npm into test/.cache) in place of the CDN, byte for byte,
- * so the page's integrity hash is checked too.
+ * so the page's integrity hash is checked too. Set PAPER_CSS to Paper's
+ * app/assets/PaperHand.css to compare the CSS with the real file.
  */
 'use strict';
 const fs = require('fs');
@@ -42,14 +42,14 @@ function check(name, ok, detail) {
   results.push({ name, ok: !!ok, detail });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail !== undefined ? '  (' + detail + ')' : ''}`);
 }
+const median = (a) => { const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
 (async () => {
   const [sampleDir, outDir] = process.argv.slice(2);
-  const detectOnly = process.argv.includes('--detect');
-  if (!sampleDir || !outDir) { console.error('usage: node test/e2e.js SAMPLE_DIR OUT_DIR [--detect]'); process.exit(2); }
+  if (!sampleDir || !outDir) { console.error('usage: node test/e2e.js SAMPLE_DIR OUT_DIR'); process.exit(2); }
   fs.mkdirSync(outDir, { recursive: true });
   const truth = JSON.parse(fs.readFileSync(path.join(sampleDir, 'truth.json'), 'utf8'));
-  const photoMmPx = Math.hypot(truth.marks[1][0] - truth.marks[0][0], truth.marks[1][1] - truth.marks[0][1]) / 176;
+  const byChar = Object.fromEntries(truth.chars.map((c) => [c.ch, c]));
 
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, acceptDownloads: true });
@@ -63,62 +63,58 @@ function check(name, ok, detail) {
 
   await page.goto('file://' + path.join(ROOT, 'index.html'));
   check('opentype.js loaded (integrity hash matches)', await page.evaluate(() => !!window.opentype));
+  const title = await page.evaluate(async () => {
+    const faces = await document.fonts.load('44px "Paper Hand"');
+    return { faces: faces.length, family: getComputedStyle(document.querySelector('h1')).fontFamily, text: document.querySelector('h1').textContent };
+  });
+  check('title "Paper Hand" is set in Paper\'s own handwriting font', title.faces > 0 && /^"?Paper Hand/.test(title.family) && title.text === 'Paper Hand', `${title.faces} face loaded, font-family ${title.family}`);
+  await page.screenshot({ path: path.join(outDir, 'desktop-start.png'), fullPage: true });
 
-  // upload, then let the page look for the corners on its own
+  const t0 = Date.now();
   await page.setInputFiles('#file', path.join(sampleDir, 'photo.jpg'));
-  await page.waitForFunction(() => window.PaperHand.state.corners && window.PaperHand.state.results, null, { timeout: 30000 });
-  const det = await page.evaluate(() => ({ auto: window.PaperHand.state.auto, corners: window.PaperHand.state.corners, scale: window.PaperHand.state.scale, turns: window.PaperHand.state.turns }));
-  // if the page turned the photo, turn the true positions with it (quarter turns clockwise)
-  for (let t = 0, w = truth.width, h = truth.height; t < det.turns; t++, [w, h] = [h, w]) truth.marks = truth.marks.map(([x, y]) => [h - y, x]);
-  if (det.turns) console.log(`      (the page turned the photo ${det.turns * 90} degrees)`);
-  const errsMm = det.corners.map((c, i) => Math.hypot(c[0] / det.scale - truth.marks[i][0], c[1] / det.scale - truth.marks[i][1]) / photoMmPx);
-  const maxErr = Math.max(...errsMm);
-  check('corner marks found automatically', det.auto && maxErr < 1, `max error ${maxErr.toFixed(2)} mm`);
-  if (detectOnly) {
+
+  // a sheet with characters missing: one short message, no font
+  if (truth.skipped) {
+    const want = `Found ${truth.chars.length} characters, expected 62.`;
+    await page.waitForFunction(() => document.getElementById('msg').textContent, null, { timeout: 60000 });
+    const got = await page.evaluate(() => ({ msg: document.getElementById('msg').textContent, disabled: document.getElementById('getCss').disabled, cells: document.querySelectorAll('#cells .cell').length }));
+    check('wrong count shows the message', got.msg === want, JSON.stringify(got.msg));
+    check('and no font to download', got.disabled && got.cells === truth.chars.length, `download disabled: ${got.disabled}, ${got.cells} shapes shown`);
+    await page.screenshot({ path: path.join(outDir, 'desktop-wrong-count.png'), fullPage: true });
+    check('no errors in the page console', errors.length === 0, errors.slice(0, 3).join(' | '));
     await browser.close();
-    fs.writeFileSync(path.join(outDir, 'detect.json'), JSON.stringify({ auto: det.auto, turns: det.turns, errorsMm: errsMm }, null, 1));
-    process.exit(results.every((r) => r.ok) ? 0 : 1);
+    const failed = results.filter((r) => !r.ok);
+    console.log(failed.length ? `\n${failed.length} check(s) failed` : '\nall checks passed');
+    process.exit(failed.length ? 1 : 0);
   }
 
-  // drag each handle onto its mark, as a person would (first pull it well off, to test the drag itself)
-  async function dragHandle(i, target) {
-    const h = page.locator(`.handle[data-i="${i}"]`);
-    await h.scrollIntoViewIfNeeded();
-    const b = await h.boundingBox();
-    const from = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-    const canvasBox = await page.locator('#photo').boundingBox();
-    const size = await page.evaluate(() => [window.PaperHand.state.canvas.width, window.PaperHand.state.canvas.height]);
-    const to = { x: canvasBox.x + target[0] / size[0] * canvasBox.width, y: canvasBox.y + target[1] / size[1] * canvasBox.height };
-    await page.mouse.move(from.x, from.y);
-    await page.mouse.down();
-    await page.mouse.move((from.x + to.x) / 2 + 30, (from.y + to.y) / 2 + 30, { steps: 5 });
-    await page.mouse.move(to.x, to.y, { steps: 8 });
-    await page.mouse.up();
-  }
-  const offsets = [[60, 50], [-60, 50], [-60, -50], [60, -50]];
-  for (let i = 0; i < 4; i++) {
-    const c = det.corners[i];
-    await dragHandle(i, [c[0] + offsets[i][0] * det.scale * 4, c[1] + offsets[i][1] * det.scale * 4]);
-  }
-  const off = await page.evaluate(() => window.PaperHand.state.corners);
-  check('handles move when dragged', off.every((c, i) => Math.hypot(c[0] - det.corners[i][0], c[1] - det.corners[i][1]) > 100));
-  for (let i = 0; i < 4; i++) await dragHandle(i, [truth.marks[i][0] * det.scale, truth.marks[i][1] * det.scale]);
-  const manual = await page.evaluate(() => window.PaperHand.state.corners);
-  const manErr = Math.max(...manual.map((c, i) => Math.hypot(c[0] / det.scale - truth.marks[i][0], c[1] / det.scale - truth.marks[i][1]) / photoMmPx));
-  check('handles dragged onto the marks', manErr < 1, `max error ${manErr.toFixed(2)} mm`);
+  await page.waitForFunction(() => window.PaperHand.state.ready, null, { timeout: 60000 });
+  const seconds = (Date.now() - t0) / 1000;
 
-  await page.waitForFunction(() => window.PaperHand.state.ready, null, { timeout: 30000 });
+  // what was read where: each character's centre, back in the photo's pixels
+  const reading = await page.evaluate(() => {
+    const st = window.PaperHand.state, r = st.reading;
+    return {
+      count: r.count, order: r.order, angle: r.angle * 180 / Math.PI,
+      chars: r.chars.map((c) => ({ ch: c.ch, at: window.PaperHand.toPhoto((c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2) })),
+    };
+  });
+  const wrong = reading.chars.filter((c) => {
+    const t = byChar[c.ch];
+    return !t || !(c.at[0] > t.photo[0] && c.at[0] < t.photo[2] && c.at[1] > t.photo[1] && c.at[1] < t.photo[3]);
+  });
+  check('62 characters found', reading.count === 62, `${reading.count} found in ${seconds.toFixed(1)} s, writing tilted ${reading.angle.toFixed(2)} degrees`);
+  const orderNames = { lower: 'a-z, A-Z, 0-9', upper: 'A-Z, a-z, 0-9', pairs: 'aA bB ... 0-9', Pairs: 'Aa Bb ... 0-9' };
+  check(`written order recognised (${orderNames[truth.order]})`, reading.order === truth.order, `read as ${reading.order}`);
+  check('every character read as the one written there', reading.chars.length === 62 && wrong.length === 0, `${62 - wrong.length}/62 match the place they were drawn` + (wrong.length ? `, wrong: ${wrong.map((c) => c.ch).join(' ')}` : ''));
 
   const info = await page.evaluate(async () => {
-    const st = window.PaperHand.state, font = st.built.font;
-    const req = window.PaperHandLayout.REQUIRED;
-    const glyphs = {};
-    for (const ch of req) {
+    const st = window.PaperHand.state, font = st.built.font, glyphs = {};
+    for (const ch of 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') {
       const index = font.charToGlyphIndex(ch), g = index ? font.glyphs.get(index) : null;
       const bb = g && g.path.commands.length ? g.getBoundingBox() : null;
-      glyphs[ch] = { index, commands: g ? g.path.commands.length : 0, adv: g ? g.advanceWidth : 0, bb: bb && { x1: bb.x1, y1: bb.y1, x2: bb.x2, y2: bb.y2 } };
+      glyphs[ch] = { index, commands: g ? g.path.commands.length : 0, adv: g ? g.advanceWidth : 0, bb: bb && { y1: bb.y1, y2: bb.y2 } };
     }
-    // does the woff load as a web font on its own?
     const face = new FontFace('E2E Check', st.woff);
     let status;
     try { await face.load(); status = face.status; } catch (e) { status = 'error: ' + e.message; }
@@ -132,54 +128,54 @@ function check(name, ok, detail) {
     const mine = span.getBoundingClientRect().width;
     span.remove();
     const expected = [...'Handwriting'].reduce((w, ch) => w + font.glyphs.get(font.charToGlyphIndex(ch)).advanceWidth, 0) * 48 / font.unitsPerEm;
-    const cells = document.querySelectorAll('#cells .cell').length;
-    const missing = document.querySelectorAll('#cells .cell.missing:not(.optional)').length;
-    return { glyphs, status, mono, mine, expected, cells, missing, woffBytes: st.woff.byteLength, cssBytes: st.css.length, unitsPerMm: st.built.scale * window.PaperHand.K, note: document.getElementById('fontNote').textContent, count: font.glyphs.length };
+    return { glyphs, status, mono, mine, expected, woffBytes: st.woff.byteLength, count: font.glyphs.length };
   });
   const req = Object.keys(info.glyphs);
   const nonEmpty = req.filter((ch) => info.glyphs[ch].index > 0 && info.glyphs[ch].commands > 0);
-  const skipped = (truth.skipped || []).filter((ch) => req.includes(ch));
-  const wantGlyphs = 62 - skipped.length;
-  check(`${wantGlyphs} required glyphs present with outlines`, nonEmpty.length === wantGlyphs && skipped.every((ch) => !nonEmpty.includes(ch)),
-    `${nonEmpty.length}/62, font has ${info.count} glyphs incl. .notdef and space` + (skipped.length ? `, left empty on purpose: ${skipped.join(' ')}` : ''));
-  check('72 preview cells shown, empty boxes flagged', info.cells === 72 && info.missing === skipped.length, `${info.cells} cells, ${info.missing} flagged as empty`);
+  check('62 glyphs with outlines', nonEmpty.length === 62, `${nonEmpty.length}/62, font has ${info.count} glyphs incl. .notdef and space`);
   check('woff loads through FontFace', info.status === 'loaded', `${info.status}, ${info.woffBytes} bytes`);
-  check('text renders in the new font', Math.abs(info.mine - info.expected) < 1, `"Handwriting" at 48px is ${info.mine.toFixed(1)}px wide, the font's advances add up to ${info.expected.toFixed(1)}px (monospace fallback ${info.mono.toFixed(1)}px)`);
-  const has = (ch) => info.glyphs[ch] && info.glyphs[ch].bb;
-  const desc = ['g', 'j', 'p', 'q', 'y'].filter(has).map((ch) => [ch, Math.round(info.glyphs[ch].bb.y1)]);
+  check('text renders in the new font', Math.abs(info.mine - info.expected) < 1, `"Handwriting" at 48px is ${info.mine.toFixed(1)}px wide, the font's advances add up to ${info.expected.toFixed(1)}px (monospace ${info.mono.toFixed(1)}px)`);
+  const G = info.glyphs;
+  const desc = ['g', 'j', 'p', 'q', 'y'].map((ch) => [ch, Math.round(G[ch].bb.y1)]);
   check('descenders g j p q y go below the baseline', desc.every(([, y]) => y < -120), desc.map(([c, y]) => `${c} ${y}`).join(', '));
-  const flat = ['a', 'c', 'e', 'm', 'n', 'o', 'r', 's', 'u', 'v', 'w', 'x', 'z'].filter(has).map((ch) => [ch, Math.round(info.glyphs[ch].bb.y1)]);
-  check('x-height letters sit on the baseline (within the sample\'s own wobble)', flat.every(([, y]) => Math.abs(y) < 110), flat.map(([c, y]) => `${c} ${y}`).join(', '));
-  // every glyph's top and bottom, against where make_sample.py really put the ink (mm from the printed baseline)
-  let worst = { err: 0 }, sumErr = 0, n = 0;
+  const flat = ['a', 'c', 'e', 'm', 'n', 'o', 'r', 's', 'u', 'v', 'w', 'x', 'z'].map((ch) => [ch, Math.round(G[ch].bb.y1)]);
+  check('x-height letters sit on the baseline', flat.every(([, y]) => Math.abs(y) < 110), flat.map(([c, y]) => `${c} ${y}`).join(', '));
+  const capH = median(['H', 'E', 'T', 'L', 'N'].map((ch) => G[ch].bb.y2)), xH = median(['x', 'z', 'n', 'u', 'v'].map((ch) => G[ch].bb.y2));
+  check('capitals taller than small letters', capH > xH * 1.25, `cap height ${Math.round(capH)}, x-height ${Math.round(xH)}`);
+  // every glyph's top and bottom, in capital heights from the baseline, against the sample's own.
+  // Without printed lines the baseline is fitted through the letters' bottoms, which sits a hair below
+  // a type designer's baseline (round letters overshoot it), so each line's common offset is reported
+  // separately and the check is on what is left: one letter against its neighbours.
+  const capUnits = median('ABCDEFGHIKLMNOPRSTUVWXYZ'.split('').map((ch) => G[ch].bb.y2));
+  const capTruth = median('ABCDEFGHIKLMNOPRSTUVWXYZ'.split('').map((ch) => byChar[ch].top_photo));
+  const lineOffset = {};
+  for (let l = 0; l < truth.lines; l++) {
+    const inLine = req.filter((ch) => byChar[ch].line === l);
+    lineOffset[l] = median(inLine.map((ch) => G[ch].bb.y1 / capUnits - byChar[ch].bottom_photo / capTruth));
+  }
+  let worst = { err: 0 }, sum = 0, n = 0;
   for (const ch of req) {
-    const t = truth.glyphs && truth.glyphs[ch], bb = info.glyphs[ch].bb;
-    if (!t || !bb) continue;
-    for (const [got, want, edge] of [[bb.y2 / info.unitsPerMm, t.top, 'top'], [bb.y1 / info.unitsPerMm, t.bottom, 'bottom']]) {
-      const err = Math.abs(got - want); sumErr += err; n++;
+    const off = lineOffset[byChar[ch].line];
+    for (const [got, want, edge] of [[G[ch].bb.y2 / capUnits - off, byChar[ch].top_photo / capTruth, 'top'], [G[ch].bb.y1 / capUnits - off, byChar[ch].bottom_photo / capTruth, 'bottom']]) {
+      const err = Math.abs(got - want); sum += err; n++;
       if (err > worst.err) worst = { err, ch, edge };
     }
   }
-  check('glyph tops and bottoms match the ink on the page', n === 2 * wantGlyphs && worst.err < 0.35,
-    `${n} edges, mean error ${(sumErr / n).toFixed(3)} mm, worst ${worst.err.toFixed(3)} mm (${worst.ch} ${worst.edge}), ${info.unitsPerMm.toFixed(1)} units per mm`);
-  const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
-  const capH = med(['H', 'E', 'T', 'L', 'N'].filter(has).map((ch) => info.glyphs[ch].bb.y2));
-  const xH = med(['x', 'z', 'n', 'u', 'v'].filter(has).map((ch) => info.glyphs[ch].bb.y2));
-  check('capitals taller than small letters', capH > xH * 1.25, `cap height ${Math.round(capH)}, x-height ${Math.round(xH)}`);
-  check('widths keep their proportions (m > n > i)', info.glyphs.m.adv > info.glyphs.n.adv && info.glyphs.n.adv > info.glyphs.i.adv, `m ${info.glyphs.m.adv}, n ${info.glyphs.n.adv}, i ${info.glyphs.i.adv}`);
+  const offs = Object.values(lineOffset);
+  check('baseline found on every line', offs.every((o) => Math.abs(o) < 0.06), `line offsets ${offs.map((o) => (100 * o).toFixed(1) + '%').join(', ')} of a capital`);
+  // the cut-out letters are about 55 px tall, so 1 px of ink spread is about 2% of a capital
+  check('glyph tops and bottoms match the writing', sum / n < 0.035 && worst.err < 0.09,
+    `${n} edges, mean error ${(100 * sum / n).toFixed(1)}% of a capital, worst ${(100 * worst.err).toFixed(1)}% (${worst.ch} ${worst.edge})`);
 
-  // try the controls: a different threshold should rebuild the font
-  await page.locator('#threshold').fill('0.45');
-  await page.waitForTimeout(200);
-  await page.waitForFunction(() => window.PaperHand.state.ready, null, { timeout: 30000 });
-  await page.locator('#threshold').fill('0.55');
-  await page.waitForTimeout(200);
-  await page.waitForFunction(() => window.PaperHand.state.ready, null, { timeout: 30000 });
-  await page.locator('#name').fill('My Hand');
+  // the one control: more or less ink rebuilds the font
+  await page.locator('#threshold').fill('0.5');
   await page.waitForTimeout(400);
-  await page.waitForFunction(() => window.PaperHand.state.ready, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.PaperHand.state.ready, null, { timeout: 60000 });
+  await page.locator('#threshold').fill('0.6');
+  await page.waitForTimeout(400);
+  await page.waitForFunction(() => window.PaperHand.state.ready, null, { timeout: 60000 });
+  check('Ink slider rebuilds the font', await page.evaluate(() => window.PaperHand.state.reading.count === 62 && window.PaperHand.state.ready));
 
-  // downloads
   async function download(sel) {
     const [d] = await Promise.all([page.waitForEvent('download'), page.click(sel)]);
     const file = path.join(outDir, d.suggestedFilename());
@@ -189,16 +185,20 @@ function check(name, ok, detail) {
   const cssFile = await download('#getCss');
   const woffFile = await download('#getWoff');
   const otfFile = await download('#getOtf');
-  check('downloads named PaperHand.css, My-Hand.woff, My-Hand.otf',
-    path.basename(cssFile) === 'PaperHand.css' && path.basename(woffFile) === 'My-Hand.woff' && path.basename(otfFile) === 'My-Hand.otf',
+  check('downloads named PaperHand.css, PaperHand.woff, PaperHand.otf',
+    [cssFile, woffFile, otfFile].map((f) => path.basename(f)).join() === 'PaperHand.css,PaperHand.woff,PaperHand.otf',
     [cssFile, woffFile, otfFile].map((f) => path.basename(f)).join(', '));
 
-  // screenshots
-  await page.locator('#try').fill('The quick brown fox jumps over the lazy dog\nPack my box with 5 dozen jugs\nJigsaw puzzles, quietly (0123456789)!');
+  const shown = await page.evaluate(() => ({
+    preview: getComputedStyle(document.getElementById('try')).display !== 'none',
+    cells: document.querySelectorAll('#cells .cell').length,
+    labels: [...document.querySelectorAll('#cells .cell span')].map((s) => s.textContent).join(''),
+  }));
+  check('preview line and the 62 read shapes are shown', shown.preview && shown.cells === 62 && shown.labels.length === 62, `${shown.cells} shapes, labelled ${shown.labels.slice(0, 12)}...`);
+  await page.locator('#try').fill('Jumpy foxes, 2024');
   await page.waitForTimeout(300);
-  await page.locator('#step5').screenshot({ path: path.join(outDir, 'step5-preview.png') });
-  await page.locator('#step4').screenshot({ path: path.join(outDir, 'step4-cells.png') });
-  await page.locator('#step3').screenshot({ path: path.join(outDir, 'step3-corners.png') });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(outDir, 'desktop-full.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(300);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -210,7 +210,7 @@ function check(name, ok, detail) {
 
   // the font file itself, checked independently with fontTools
   try {
-    const out = execSync(`python3 "${path.join(__dirname, 'check_font.py')}" "${woffFile}" "${cssFile}" ${process.env.PAPER_CSS ? '"' + process.env.PAPER_CSS + '"' : ''}${skipped.length ? ` --missing "${skipped.join('')}"` : ''}`).toString();
+    const out = execSync(`python3 "${path.join(__dirname, 'check_font.py')}" "${woffFile}" "${cssFile}" ${process.env.PAPER_CSS ? '"' + process.env.PAPER_CSS + '"' : ''}`).toString();
     process.stdout.write(out);
     if (/^FAIL/m.test(out)) results.push({ name: 'fontTools checks', ok: false });
   } catch (e) {
@@ -218,7 +218,7 @@ function check(name, ok, detail) {
     results.push({ name: 'fontTools checks', ok: false });
   }
 
-  fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({ results, autoCornerErrorMm: errsMm, manualCornerErrorMm: manErr }, null, 1));
+  fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({ results }, null, 1));
   const failed = results.filter((r) => !r.ok);
   console.log(failed.length ? `\n${failed.length} check(s) failed` : '\nall checks passed');
   process.exit(failed.length ? 1 : 0);

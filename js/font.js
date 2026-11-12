@@ -1,5 +1,5 @@
 /*
- * Paper Hand font building: traced boxes become a font, a .woff and a PaperHand.css.
+ * Paper Hand font building: traced characters become a font, a .woff and a PaperHand.css.
  *
  * Needs opentype.js (window.opentype). Vertical metrics match Paper's own
  * Paper Hand font: 1000 units per em, ascender 900, descender -300.
@@ -44,7 +44,7 @@
    */
   function build(opentype, glyphs, opts) {
     opts = opts || {};
-    var sb = Math.round(opts.spacing == null ? 45 : opts.spacing);
+    var sb = Math.round(opts.spacing == null ? 75 : opts.spacing);
     var s = unitsPerPixel(glyphs);
     if (!s) throw new Error('Not enough letters found to size the font.');
     var list = [], metrics = {}, advances = [];
