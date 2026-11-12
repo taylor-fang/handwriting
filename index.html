@@ -4,230 +4,101 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Paper Hand</title>
-<meta name="description" content="Turn a photo of your handwriting into a web font, for Paper or anywhere else.">
+<meta name="description" content="Turn a photo of your handwriting into a font.">
 <meta name="theme-color" content="#f3efe6">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="fonts/PaperHand.css">
 <style>
   :root {
     --paper: #f3efe6;
-    --card: #f8f5ee;
-    --bar: #ebe6dc;
     --ink: #000;
-    --soft: #6f685d;
+    --soft: #8d877c;
     --faint: #d8d0c2;
     --accent: #8c6640;
-    --accent-soft: rgba(140, 102, 64, .12);
     --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
-  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 var(--font); }
-  main { max-width: 820px; margin: 0 auto; padding: 40px 16px 64px; }
-  a { color: var(--accent); text-underline-offset: 2px; }
-  h1 { font-size: 30px; line-height: 1.2; font-weight: 600; margin: 0 0 8px; letter-spacing: -.01em; }
-  .lede { color: var(--soft); margin: 0 0 32px; max-width: 60ch; }
-  h2 { font-size: 20px; font-weight: 600; margin: 0 0 6px; display: flex; gap: 10px; align-items: baseline; }
-  h2 .n { color: var(--accent); font-weight: 600; font-size: 15px; min-width: 1.2em; }
-  .step { background: var(--card); border: 1px solid var(--faint); border-radius: 10px; padding: 20px; margin: 0 0 18px; }
-  .step > p, .step > ul, .step > details { max-width: 64ch; }
-  .step p { margin: 6px 0 12px; }
-  .muted { color: var(--soft); font-size: 14px; }
-  .waiting .body { display: none; }
-  .waiting .wait { display: block; }
-  .wait { display: none; color: var(--soft); font-size: 14px; margin: 4px 0 0; }
-  ul.tips { padding-left: 1.1em; margin: 6px 0 12px; }
-  ul.tips li { margin: 2px 0; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.55 var(--font); }
+  main { max-width: 600px; margin: 0 auto; padding: 72px 16px 96px; }
+  h1 { font: 400 44px/1 "Paper Hand", var(--font); margin: 0 0 56px; color: rgba(0, 0, 0, .9); }
 
-  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent);
-    background: transparent; color: var(--accent); font: 500 15px/1.2 var(--font); text-decoration: none; cursor: pointer; }
-  .btn.primary { background: var(--accent); color: #fff; }
-  .btn:hover { background: var(--accent-soft); }
-  .btn.primary:hover { background: #7a5836; }
-  .btn:disabled { opacity: .45; cursor: default; }
-  .btn:focus-visible, .handle:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .step { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: baseline; margin: 0 0 48px; }
+  .n { color: var(--accent); font-weight: 600; }
+  .line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+  .small { font-size: 14px; color: var(--accent); text-decoration: none; }
+  .small:hover { text-decoration: underline; }
+  .how { margin: 16px 0 0; max-width: 46ch; }
+
+  .btn { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 18px; border-radius: 8px; border: 0;
+    background: var(--accent); color: #fff; font: 500 16px/1.2 var(--font); cursor: pointer; }
+  .btn:hover { background: #7a5836; }
+  .btn:disabled { opacity: .35; cursor: default; }
+  .btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  a.small[aria-disabled=true] { opacity: .35; pointer-events: none; }
 
-  details { margin: 8px 0; }
-  summary { cursor: pointer; color: var(--accent); font-weight: 500; }
-  .spec { font-size: 14px; color: #2b2721; }
-  .spec table { border-collapse: collapse; margin: 8px 0; }
-  .spec td { padding: 2px 12px 2px 0; vertical-align: top; }
-  .spec td:first-child { color: var(--soft); white-space: nowrap; }
+  .msg { font-size: 14px; color: var(--accent); margin: 14px 0 0; }
+  .msg:empty { display: none; }
+  #work { display: none; margin-top: 28px; }
+  .loaded #work { display: block; }
 
-  .drop { border: 1.5px dashed var(--faint); border-radius: 10px; padding: 18px; text-align: center; color: var(--soft); }
-  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
-  .stage { position: relative; margin: 12px 0 6px; user-select: none; -webkit-user-select: none; line-height: 0; }
-  .stage canvas.photo { width: 100%; height: auto; display: block; border-radius: 6px; background: #ddd; }
-  .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  .handle { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; cursor: grab; touch-action: none; }
-  .handle::before { content: ""; position: absolute; inset: 9px; border-radius: 50%; border: 2px solid var(--accent); background: rgba(243, 239, 230, .35); box-shadow: 0 0 0 1px rgba(255, 255, 255, .8); }
-  .handle::after { content: ""; position: absolute; left: 21px; top: 21px; width: 2px; height: 2px; background: #d33; box-shadow: 0 0 0 1px #fff; }
-  .handle.dragging { cursor: grabbing; }
-  .loupe { position: absolute; top: 8px; width: 140px; height: 140px; border-radius: 50%; border: 2px solid var(--accent); background: #fff; display: none; pointer-events: none;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, .2); }
-  .note { font-size: 14px; color: var(--soft); min-height: 1.4em; margin: 6px 0; }
-  .note.ok { color: #3d6b3a; }
-  .note.warn { color: #9a4b1c; }
-
-  .controls { display: grid; grid-template-columns: max-content 1fr 3.5em; gap: 8px 12px; align-items: center; margin: 10px 0 14px; font-size: 14px; }
-  .controls output { color: var(--soft); text-align: right; font-variant-numeric: tabular-nums; }
-  input[type=range] { width: 100%; accent-color: var(--accent); }
-  .cells { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
-  .cell { position: relative; background: #fffdf8; border: 1px solid var(--faint); border-radius: 4px; overflow: hidden; }
+  .ink { display: flex; align-items: center; gap: 14px; margin: 0 0 14px; font-size: 14px; color: var(--soft); }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .cells { display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 3px; }
+  .cell { position: relative; background: #fffdf8; border-radius: 3px; }
   .cell canvas { display: block; width: 100%; height: auto; }
-  .cell span { position: absolute; left: 3px; top: 1px; font-size: 11px; line-height: 1.2; color: var(--accent); }
-  .cell.missing { border-style: dashed; border-color: var(--accent); }
-  .cell.optional.missing { border-color: var(--faint); opacity: .6; }
-  .flat { max-width: 320px; width: 100%; border: 1px solid var(--faint); border-radius: 4px; display: block; margin-top: 8px; }
+  .cell span { position: absolute; left: 3px; top: 1px; font-size: 10px; line-height: 1.2; color: var(--accent); }
 
-  label.field { display: block; font-size: 14px; color: var(--soft); margin: 10px 0 4px; }
-  input[type=text], textarea { width: 100%; font: 16px/1.4 var(--font); padding: 8px 10px; border: 1px solid var(--faint); border-radius: 8px; background: #fffdf8; color: var(--ink); }
-  textarea.try { min-height: 120px; overflow: hidden; font-size: 40px; line-height: 1.25; resize: vertical; }
-  .paperbar { background: var(--bar); border-radius: 8px; padding: 18px 20px; margin: 14px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; }
-  .paperbar .k { font: 400 24px/1 var(--hand, serif); text-transform: uppercase; letter-spacing: .03em; color: rgba(0, 0, 0, .9); margin: 4px 0 6px; }
-  .paperbar .v { font: 15px/1.4 "Times New Roman", Times, serif; color: #333; }
-  code { font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace; background: var(--accent-soft); padding: 1px 4px; border-radius: 4px; }
-  footer { color: var(--soft); font-size: 14px; margin-top: 28px; }
+  #try { display: none; width: 100%; margin: 0 0 20px; padding: 0 0 6px; border: 0; border-bottom: 1px solid var(--faint); border-radius: 0;
+    background: transparent; color: var(--ink); font-size: 34px; line-height: 1.3; outline: none; }
+  .ready #try { display: block; }
 
   @media (max-width: 560px) {
-    main { padding-top: 24px; }
-    h1 { font-size: 25px; }
-    .step { padding: 16px 14px; }
-    .cells { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
-    .controls { grid-template-columns: 1fr 3em; }
-    .controls label { grid-column: 1 / -1; margin-bottom: -6px; }
-    textarea.try { font-size: 30px; }
-    .paperbar { grid-template-columns: 1fr; }
+    main { padding-top: 48px; }
+    h1 { margin-bottom: 40px; }
+    .step { grid-template-columns: 26px minmax(0, 1fr); margin-bottom: 40px; }
+    .cells { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+    #try { font-size: 28px; }
   }
 </style>
 </head>
 <body>
 <main>
   <h1>Paper Hand</h1>
-  <p class="lede">Turn a photo of your handwriting into a font. Print a sheet, write each letter in its box, take a picture, and download a font you can use in <a href="https://github.com/taylor-fang/Paper">Paper</a> or anywhere else. Everything happens in this page: your photo never leaves your device.</p>
 
   <section class="step" id="step1">
-    <h2><span class="n">1</span>Print the template</h2>
-    <p>One sheet with a box for every letter and number, plus a few optional punctuation marks. It fits on Letter and A4 paper. Any print size works, as long as the four black corner squares are on the page.</p>
-    <div class="row">
-      <a class="btn primary" href="template/paper-hand-template-letter.pdf" download>PDF, Letter</a>
-      <a class="btn" href="template/paper-hand-template-a4.pdf" download>PDF, A4</a>
-      <a class="btn" href="template/paper-hand-template.png" download>PNG</a>
-      <a class="btn" href="template/paper-hand-template.svg" download>SVG</a>
+    <span class="n">1</span>
+    <div>
+      <label class="btn" for="file">Upload a photo</label>
+      <input type="file" id="file" accept="image/*">
+      <p class="how">Use pen on a blank sheet of paper. Carefully write out every letter of the alphabet, both uppercase and lowercase, and every number. Upload a clear picture.</p>
+      <p class="msg" id="msg"></p>
+      <div id="work">
+        <div class="ink"><label for="threshold">Ink</label><input type="range" id="threshold" min="0.3" max="0.9" step="0.01" value="0.6"></div>
+        <div class="cells" id="cells"></div>
+      </div>
     </div>
-    <details class="spec">
-      <summary>No printer? Draw the grid by hand</summary>
-      <p>You can rule the same grid with a pencil and ruler. The sizes matter, because the page cuts the boxes by measurement:</p>
-      <table>
-        <tr><td>Corner squares</td><td>Four filled-in black squares, 8 mm on each side. Their centres form a rectangle 176 mm wide and 240 mm tall.</td></tr>
-        <tr><td>Grid</td><td>8 columns and 9 rows. Measured from the centre of the top-left square, the first column starts 8 mm to the right and the first row starts 12 mm down.</td></tr>
-        <tr><td>Spacing</td><td>Each column is 20 mm wide and each row 25 mm tall. Each box is 18.5 mm wide and 20.5 mm tall, centred in its column, at the top of its row.</td></tr>
-        <tr><td>Baseline</td><td>A light line 13.5 mm below the top of each box. Letters sit on it.</td></tr>
-        <tr><td>Order</td><td>Left to right, top to bottom: a to z, then A to Z, then 0 to 9, then <code>. , ! ? ' - : ; ( )</code></td></tr>
-      </table>
-      <p>Keep your ruled lines light (a pencil is ideal) so only your pen strokes count as ink.</p>
-    </details>
   </section>
 
   <section class="step" id="step2">
-    <h2><span class="n">2</span>Write, then take a photo</h2>
-    <p>Write each character in its box with a dark pen. Let it sit on the baseline, the way you would write on lined paper. Small letters reach about the dotted line; g, j, p, q and y hang below.</p>
-    <ul class="tips">
-      <li>A black felt tip or gel pen works best. Pencil is too faint.</li>
-      <li>Fill the box comfortably, but keep every stroke inside it.</li>
-      <li>Photograph from straight above, in even daylight, with no shadow from your phone or hand.</li>
-      <li>Get the whole sheet in, with all four black squares. A scan works too.</li>
-    </ul>
-  </section>
-
-  <section class="step waiting" id="step3">
-    <h2><span class="n">3</span>Upload and line up the corners</h2>
-    <div class="drop" id="drop">
-      <p style="margin:0 0 10px">Drop your photo here, or</p>
-      <label class="btn primary" for="file">Choose a photo</label>
-      <input type="file" id="file" accept="image/*">
-    </div>
-    <div class="body">
-      <div class="stage" id="stage">
-        <canvas class="photo" id="photo"></canvas>
-        <svg id="overlay" preserveAspectRatio="none"></svg>
-        <div class="handle" tabindex="0" role="button" aria-label="Top-left corner" data-i="0"></div>
-        <div class="handle" tabindex="0" role="button" aria-label="Top-right corner" data-i="1"></div>
-        <div class="handle" tabindex="0" role="button" aria-label="Bottom-right corner" data-i="2"></div>
-        <div class="handle" tabindex="0" role="button" aria-label="Bottom-left corner" data-i="3"></div>
-        <canvas class="loupe" id="loupe" width="140" height="140"></canvas>
+    <span class="n">2</span>
+    <div>
+      <input type="text" id="try" value="The quick brown fox" spellcheck="false" aria-label="Try your font">
+      <div class="line">
+        <button class="btn" id="getCss" type="button" disabled>Download PaperHand.css</button>
+        <a class="small" id="getWoff" href="#" aria-disabled="true">.woff</a>
+        <a class="small" id="getOtf" href="#" aria-disabled="true">.otf</a>
       </div>
-      <p class="note" id="cornerNote"></p>
-      <div class="row">
-        <button class="btn" id="redetect" type="button">Find corners again</button>
-        <button class="btn" id="rotate" type="button">Rotate photo</button>
-      </div>
-      <p class="muted">Drag each circle onto the middle of a black corner square (arrow keys nudge a focused circle). The outlines show where every box will be cut; they should sit on the printed boxes.</p>
     </div>
   </section>
-
-  <section class="step waiting" id="step4">
-    <h2><span class="n">4</span>Check the letters</h2>
-    <p class="wait">Your letters appear here once the photo is lined up.</p>
-    <div class="body">
-      <p>Each box is cut out, cleaned up and traced. If strokes look broken, move the ink slider right. If smudges or lines show up, move it left.</p>
-      <div class="controls">
-        <label for="threshold">Ink</label><input type="range" id="threshold" min="0.2" max="0.9" step="0.01" value="0.55"><output id="thresholdOut">55%</output>
-        <label for="speck">Clean specks</label><input type="range" id="speck" min="0" max="1.5" step="0.05" value="0.15"><output id="speckOut">0.15</output>
-      </div>
-      <p class="note" id="cellNote"></p>
-      <div class="cells" id="cells"></div>
-      <details>
-        <summary>See the straightened page</summary>
-        <canvas class="flat" id="flat"></canvas>
-      </details>
-    </div>
-  </section>
-
-  <section class="step waiting" id="step5">
-    <h2><span class="n">5</span>Try it, then download</h2>
-    <p class="wait">Your font appears here once your letters are ready.</p>
-    <div class="body">
-      <label class="field" for="try">Type anything</label>
-      <textarea class="try" id="try" spellcheck="false">The quick brown fox jumps over the lazy dog
-Pack my box with 5 dozen jugs</textarea>
-      <div class="controls">
-        <label for="spacing">Letter spacing</label><input type="range" id="spacing" min="0" max="160" step="5" value="45"><output id="spacingOut">45</output>
-      </div>
-      <p class="muted" style="margin-bottom:0">How it looks as Paper's side bar labels:</p>
-      <div class="paperbar" aria-hidden="true">
-        <div><div class="k">Notes</div><div class="v">Ask about the river scene</div></div>
-        <div><div class="k">To do</div><div class="v">Draft chapter two</div></div>
-        <div><div class="k">Papers</div><div class="v">Morning pages</div></div>
-        <div><div class="k">Font</div><div class="v">Times</div></div>
-      </div>
-      <label class="field" for="name">Font name</label>
-      <input type="text" id="name" value="Paper Hand" autocomplete="off">
-      <div class="row">
-        <button class="btn primary" id="getCss" type="button" disabled>PaperHand.css</button>
-        <button class="btn" id="getWoff" type="button" disabled>Font (.woff)</button>
-        <button class="btn" id="getOtf" type="button" disabled>Font (.otf)</button>
-      </div>
-      <p class="note" id="fontNote"></p>
-      <details open>
-        <summary>Using it in Paper</summary>
-        <p>Paper's side bar labels use a font called Paper Hand, stored in one file: <code>app/assets/PaperHand.css</code>. Replace that file with the <code>PaperHand.css</code> you download here (keep the name), then reload Paper. The labels will be in your handwriting. The CSS file always calls the font "Paper Hand" so Paper finds it; the name above goes inside the font files.</p>
-        <p>Elsewhere, use the .woff with your own <code>@font-face</code> rule, or install the .otf on your computer.</p>
-      </details>
-    </div>
-  </section>
-
-  <footer>
-    Paper Hand is open source under the MIT license. It was made for <a href="https://github.com/taylor-fang/Paper">Paper</a>, a calm place to write. Fonts are built with <a href="https://opentype.js.org">opentype.js</a>.
-  </footer>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js" integrity="sha384-3TaxGqyHrMuRIWY5Z5WHNIzgNRqGIUJE+mk6tm+g1wkm9Ux2kUyOLfy9AsNWXA6u" crossorigin="anonymous"></script>
-<script src="js/layout.js"></script>
 <script src="js/imaging.js"></script>
+<script src="js/reader.js"></script>
 <script src="js/trace.js"></script>
 <script src="js/font.js"></script>
 <script src="js/app.js"></script>
